@@ -1,0 +1,10 @@
+# IDE Related Files
+.idea/
+
+# Python Related Files
+*.pyc
+*/__pycache__/
+
+# Environment Related Files
+venv/
+.venv/
