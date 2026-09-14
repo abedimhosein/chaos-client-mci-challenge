@@ -1,5 +1,6 @@
 import logging
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import List
 
@@ -25,9 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class NodeAdapter:
-    def __init__(self, node: Node, timeout: float):
+    def __init__(self, node: Node, timeout: float, transport=None):
         self.node: Node = node
-        self.client = httpx.Client(base_url=self.node.base_url, timeout=timeout)
+        self.client = httpx.Client(
+            base_url=self.node.base_url,
+            timeout=timeout,
+            transport=transport,
+        )
 
     def _request(self, method, url, **kwargs):
         try:
@@ -98,21 +103,28 @@ class NodeAdapter:
         self.client.close()
 
 
+AdapterFactory = Callable[[Node, float], NodeAdapter]
+
+
 class OrchestratorConfig:
-    def __init__(self, max_retries: int, timeout: float, backoff: float):
+    def __init__(self, max_retries: int, timeout: float, backoff: float, hard_consistency: bool = False):
         self.max_retries: int = max_retries
         self.timeout: float = timeout
         self.backoff: float = backoff
-        self.hard_consistency: bool = False
+        self.hard_consistency: bool = hard_consistency
 
 
 class Orchestrator:
-    def __init__(self, nodes: List[Node], config: OrchestratorConfig):
+    def __init__(self,
+                 nodes: List[Node],
+                 config: OrchestratorConfig,
+                 adapter_factory: AdapterFactory = NodeAdapter):
+
         if not nodes:
             raise ValueError("nodes cannot be empty")
 
         self.config = config
-        self.node_adapters = [NodeAdapter(node, self.config.timeout) for node in nodes]
+        self.node_adapters = [adapter_factory(node, self.config.timeout) for node in nodes]
 
     def __enter__(self):
         return self
@@ -295,7 +307,7 @@ class Orchestrator:
         tries: int = 0
         root_cause: NodeConnectionError | None = None
 
-        while tries < self.config.max_retries:
+        while tries <= self.config.max_retries:
             try:
                 adapter.create_group(group)
             except NodeConnectionError as exc:
@@ -312,7 +324,7 @@ class Orchestrator:
         tries: int = 0
         root_cause: NodeConnectionError | None = None
 
-        while tries < self.config.max_retries:
+        while tries <= self.config.max_retries:
             try:
                 adapter.delete_group(group)
             except NodeConnectionError as exc:
@@ -328,7 +340,7 @@ class Orchestrator:
     def _get_group_on_node(self, group: Group, adapter: NodeAdapter) -> GroupState:
         tries: int = 0
 
-        while tries < self.config.max_retries:
+        while tries <= self.config.max_retries:
             try:
                 adapter.get_group(group)
             except NodeGroupNotFoundError:
