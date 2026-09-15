@@ -14,7 +14,7 @@ from app.models import Group, Node
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y/%#m/%#d %#H:%M:%S"
+    datefmt="%Y/%m/%d %H:%M:%S"
 )
 
 logger = logging.getLogger(__name__)
@@ -34,22 +34,21 @@ def env(path: Path) -> dict:
 
 def main() -> None:
     env_variables = env(Path(__file__).resolve().parent / '.env')
-
     nodes = [Node(node_base_url) for node_base_url in env_variables.pop('nodes')]
 
-    while True:
-        group = Group(group_id="".join(random.choices("abcdefghijklmnopqrstuvwxyz1234567890", k=10)))
+    with Orchestrator(nodes=nodes, config=OrchestratorConfig(**env_variables)) as orchestrator:
+        while True:
+            group = Group(group_id="".join(random.choices("abcdefghijklmnopqrstuvwxyz1234567890", k=10)))
 
-        with Orchestrator(nodes=nodes, config=OrchestratorConfig(**env_variables)) as orchestrator:
             try:
                 orchestrator.create_group(group)
-            except Exception as exc:
-                logger.error(exc)
+            except Exception:
+                logger.exception("Failed to create group %s.", group.group_id)
 
             try:
                 orchestrator.delete_group(group)
-            except Exception as exc:
-                logger.error(exc)
+            except Exception:
+                logger.exception("Failed to delete group %s.", group.group_id)
 
 
 if __name__ == "__main__":
