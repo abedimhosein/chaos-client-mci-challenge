@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-client-config
+data:
+  NODES: "http://host.docker.internal:11219/;http://host.docker.internal:5901/;http://host.docker.internal:5895/"
+  MAX_RETRIES: "5"
+  TIMEOUT: "2"
+  BACKOFF: "1"

@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaos-client
+  labels:
+    app: chaos-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chaos-client
+  template:
+    metadata:
+      labels:
+        app: chaos-client
+    spec:
+      containers:
+        - name: chaos-client
+          image: chaos-client:1.0.4
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: chaos-client-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
