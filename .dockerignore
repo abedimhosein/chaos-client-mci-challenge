@@ -1,0 +1,11 @@
+.env
+.git
+.gitignore
+.idea
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+README.md
+challenge.md
+tests
