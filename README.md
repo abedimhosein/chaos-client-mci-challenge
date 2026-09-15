@@ -106,3 +106,60 @@ Additional assumptions:
 * An unresolved `UNKNOWN` state is treated as a consistency risk.
 * `hard_consistency` can be used to reject situations where the required state cannot be established with certainty.
 * State verification is used instead of relying solely on exceptions to determine whether an operation succeeded.
+
+## How to Run
+
+The application continuously creates and deletes randomly generated groups across the configured nodes. Configure three node URLs before starting it.
+
+### Local Python
+
+Requirements: Python 3.12 or newer.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                 # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
+cp .env.example .env                     # Windows: copy .env.example .env
+python main.py
+```
+
+Update `.env` with reachable node URLs. `NODES` is a semicolon-separated list and each URL must include its scheme:
+
+```dotenv
+NODES=http://node1.example.com;http://node2.example.com;http://node3.example.com
+MAX_RETRIES=5
+TIMEOUT=0.5
+BACKOFF=1.5
+```
+
+### Docker
+
+Build the image using the version referenced by the Kubernetes manifest, then provide runtime configuration with the environment file:
+
+```bash
+docker build -t chaos-client:1.0.0 .
+docker run --rm --env-file .env chaos-client:1.0.0
+```
+
+The image runs `python main.py` as a non-root `appuser`.
+
+### Kubernetes
+
+The manifests expect the image `chaos-client:1.0.0`. Build it in a registry accessible to the cluster, or load it into the cluster's local image store when using a local Kubernetes distribution.
+
+Add the node addresses to `manifests/configmap.yaml` under `NODES`, then review the runtime values before applying both manifests:
+
+```bash
+kubectl apply -f manifests/configmap.yaml
+kubectl apply -f manifests/deployment.yaml
+kubectl get pods -l app=chaos-client
+kubectl logs -f deployment/chaos-client
+kubectl rollout restart deployment chaos-client # reset pod
+kubectl delete deployment chaos-client # delete pod
+```
+
+The deployment runs one replica, imports configuration from `chaos-client-config`, and uses a non-root container with a read-only root filesystem.
+
+## Cluster Simulation
+
+This project includes code for simulating a cluster consisting of unstable nodes. The simulation code is available at [this GitHub repository](https://github.com/abedimhosein/chaos-cluster-mci-challenge).
