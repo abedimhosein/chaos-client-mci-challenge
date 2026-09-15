@@ -5,8 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system appuser \
-    && adduser --system --ingroup appuser appuser
+RUN addgroup --system --gid 1000 appuser \
+    && adduser --system --uid 1000 --gid 1000 appuser
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
@@ -14,6 +14,6 @@ RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 COPY app ./app
 COPY main.py .
 
-USER appuser
+USER 1000:1000
 
 CMD ["python", "main.py"]
