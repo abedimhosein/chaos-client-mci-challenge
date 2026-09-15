@@ -115,11 +115,7 @@ class OrchestratorConfig:
 
 
 class Orchestrator:
-    def __init__(self,
-                 nodes: List[Node],
-                 config: OrchestratorConfig,
-                 adapter_factory: AdapterFactory = NodeAdapter):
-
+    def __init__(self, nodes: List[Node], config: OrchestratorConfig, adapter_factory: AdapterFactory = NodeAdapter):
         if not nodes:
             raise ValueError("nodes cannot be empty")
 
@@ -281,7 +277,9 @@ class Orchestrator:
             return True
 
         # exponential backoff
-        time.sleep(self.config.backoff * (2 ** (tries - 1)))
+        delay = self.config.backoff * (2 ** (tries - 1))
+        logger.warning(f"retrying rollback: attempt={tries + 1} backoff={delay}",)
+        time.sleep(delay)
         return True
 
     def _prepare_candidates(self, group: Group, prefer_state: GroupState) -> List[NodeAdapter]:
@@ -312,7 +310,10 @@ class Orchestrator:
                 adapter.create_group(group)
             except NodeConnectionError as exc:
                 root_cause = exc
-                time.sleep(self._get_exponential_backoff(tries))
+                if tries < self.config.max_retries:
+                    delay = self._get_exponential_backoff(tries)
+                    logger.warning(f"retrying group creation on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    time.sleep(delay)
             else:
                 return
 
@@ -329,7 +330,10 @@ class Orchestrator:
                 adapter.delete_group(group)
             except NodeConnectionError as exc:
                 root_cause = exc
-                time.sleep(self._get_exponential_backoff(tries))
+                if tries < self.config.max_retries:
+                    delay = self._get_exponential_backoff(tries)
+                    logger.warning(f"retrying group deletion on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    time.sleep(delay)
             else:
                 return
 
@@ -346,7 +350,10 @@ class Orchestrator:
             except NodeGroupNotFoundError:
                 return GroupState.NOT_FOUND
             except NodeConnectionError:
-                time.sleep(self._get_exponential_backoff(tries))
+                if tries < self.config.max_retries:
+                    delay = self._get_exponential_backoff(tries)
+                    logger.warning(f"retrying group checking on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    time.sleep(delay)
             else:
                 return GroupState.FOUND
 
