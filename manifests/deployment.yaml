@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: chaos-client
-          image: chaos-client:1.0.4
+          image: chaos-client:1.0.0
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
