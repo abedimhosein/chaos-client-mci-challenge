@@ -1,8 +1,9 @@
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from http import HTTPStatus
-from typing import List
+from typing import List, Dict
 
 import httpx
 
@@ -10,7 +11,7 @@ from .constants import GroupState
 from .exceptions import (
     GroupCreateRollbackError,
     GroupDeleteRollbackError,
-    NodeConnectionError,
+    NodeError,
     NodeGroupPerhapsAlreadyExistsError,
     NodeGroupNotFoundError,
     NodeHTTPStatusError,
@@ -47,9 +48,10 @@ class NodeAdapter:
 
         return response
 
-    def create_group(self, group: Group):
+    def create_group(self, group: Group, idempotency_key: str):
         """
         if creation was successful, returns None, if failed raise an exception
+        :param idempotency_key:
         :param group:
         :return:
         :raise: NodeRequestError, NodeHTTPStatusError, NodeGroupAlreadyExistsError
@@ -58,16 +60,18 @@ class NodeAdapter:
             self._request(
                 method='POST',
                 url="/v1/group/",
-                json={"groupId": group.group_id}
+                json={"groupId": group.group_id},
+                headers={"Idempotency-Key": idempotency_key},
             )
         except NodeHTTPStatusError as exc:
             if exc.status_code == HTTPStatus.BAD_REQUEST:
                 raise NodeGroupPerhapsAlreadyExistsError() from exc
             raise
 
-    def delete_group(self, group: Group):
+    def delete_group(self, group: Group, idempotency_key: str):
         """
         if deletion was successful, returns None, if failed rais an exception
+        :param idempotency_key:
         :param group:
         :return:
         :raise: NodeRequestError, NodeHTTPStatusError
@@ -76,7 +80,8 @@ class NodeAdapter:
             self._request(
                 method="DELETE",
                 url="/v1/group/",
-                json={"groupId": group.group_id}
+                json={"groupId": group.group_id},
+                headers={"Idempotency-Key": idempotency_key},
             )
         except NodeHTTPStatusError as exc:
             if exc.status_code == HTTPStatus.NOT_FOUND:
@@ -138,12 +143,15 @@ class Orchestrator:
 
         successful: List[NodeAdapter] = list()
         uncertainties: List[NodeAdapter] = list()
-        root_cause: NodeConnectionError | None = None
+        root_cause: NodeError | None = None
+
+        # --- generating idempotency keys
+        idem_keys = self._generate_idempotency_keys(candidates)
 
         for adapter in candidates:
             try:
-                self._create_group_on_node(group, adapter)
-            except NodeConnectionError as exc:
+                self._create_group_on_node(group, adapter, idem_keys.get(adapter))
+            except NodeError as exc:
                 root_cause = exc
                 uncertainties.append(adapter)
                 break
@@ -168,7 +176,15 @@ class Orchestrator:
         else:
             logger.info(f"group-creation: SUCCESS {group}.")
 
-    def rollback_create_group(self, rollback_candidates: List[NodeAdapter], uncertainties: List[NodeAdapter], group: Group, tries: int = 0):
+    def rollback_create_group(
+            self,
+            rollback_candidates: List[NodeAdapter],
+            uncertainties: List[NodeAdapter],
+            group: Group,
+            tries: int = 0,
+            idem_keys: Dict[NodeAdapter, str] = None
+    ):
+
         if not self._prepare_retry(tries):
             raise GroupCreateRollbackError("MAX RETRIES EXCEEDED.")
 
@@ -182,12 +198,16 @@ class Orchestrator:
             if group_state == GroupState.FOUND:
                 rollback_candidates.append(adapter)
 
+        # --------------- generating idempotency keys
+        if idem_keys is None:
+            idem_keys = self._generate_idempotency_keys(rollback_candidates)
+
         # --------------- rolling back
         pending = list()
         for adapter in rollback_candidates:
             try:
-                self._delete_group_on_node(group, adapter)
-            except NodeConnectionError:
+                self._delete_group_on_node(group, adapter, idem_keys.get(adapter))
+            except NodeError:
                 pending.append(adapter)
 
         if pending:
@@ -195,7 +215,8 @@ class Orchestrator:
                 rollback_candidates=[],
                 uncertainties=pending,
                 group=group,
-                tries=tries + 1
+                tries=tries + 1,
+                idem_keys=idem_keys
             )
         else:
             logger.info(f"rolling-back group-creation: {group} SUCCESS.")
@@ -209,12 +230,15 @@ class Orchestrator:
 
         successful: List[NodeAdapter] = list()
         uncertainties: List[NodeAdapter] = list()
-        root_cause: NodeConnectionError | None = None
+        root_cause: NodeError | None = None
+
+        # --- generating idempotency keys
+        idem_keys = self._generate_idempotency_keys(candidates)
 
         for adapter in candidates:
             try:
-                self._delete_group_on_node(group, adapter)
-            except NodeConnectionError as exc:
+                self._delete_group_on_node(group, adapter, idem_keys.get(adapter))
+            except NodeError as exc:
                 root_cause = exc
                 uncertainties.append(adapter)
                 break
@@ -239,7 +263,14 @@ class Orchestrator:
         else:
             logger.info(f"group-deletion: SUCCESS {group}.")
 
-    def rollback_delete_group(self, rollback_candidates: List[NodeAdapter], uncertainties: List[NodeAdapter], group: Group, tries: int = 0):
+    def rollback_delete_group(
+            self,
+            rollback_candidates: List[NodeAdapter],
+            uncertainties: List[NodeAdapter],
+            group: Group,
+            tries: int = 0,
+            idem_keys: Dict[NodeAdapter, str] = None
+    ):
         if not self._prepare_retry(tries):
             raise GroupDeleteRollbackError("MAX RETRIES EXCEEDED.")
 
@@ -252,11 +283,16 @@ class Orchestrator:
             if group_state == GroupState.NOT_FOUND:
                 rollback_candidates.append(adapter)
 
+        # --------------- generating idempotency keys
+        if idem_keys is None:
+            idem_keys = self._generate_idempotency_keys(rollback_candidates)
+
+        # --------------- rolling back
         pending = list()
         for adapter in rollback_candidates:
             try:
-                self._create_group_on_node(group, adapter)
-            except NodeConnectionError:
+                self._create_group_on_node(group, adapter, idem_keys.get(adapter))
+            except NodeError:
                 pending.append(adapter)
 
         if pending:
@@ -264,7 +300,8 @@ class Orchestrator:
                 rollback_candidates=[],
                 uncertainties=pending,
                 group=group,
-                tries=tries + 1
+                tries=tries + 1,
+                idem_keys=idem_keys,
             )
         else:
             logger.info(f"rolling-back group-deletion: {group} SUCCESS.")
@@ -278,7 +315,7 @@ class Orchestrator:
 
         # exponential backoff
         delay = self.config.backoff * (2 ** (tries - 1))
-        logger.warning(f"retrying rollback: attempt={tries + 1} backoff={delay}",)
+        logger.warning(f"retrying rollback: attempt={tries + 1} backoff={delay}")
         time.sleep(delay)
         return True
 
@@ -301,18 +338,19 @@ class Orchestrator:
 
         return candidates
 
-    def _create_group_on_node(self, group: Group, adapter: NodeAdapter):
+    def _create_group_on_node(self, group: Group, adapter: NodeAdapter, idempotency_key: str):
         tries: int = 0
-        root_cause: NodeConnectionError | None = None
+        root_cause: NodeError | None = None
 
         while tries <= self.config.max_retries:
             try:
-                adapter.create_group(group)
-            except NodeConnectionError as exc:
+                adapter.create_group(group, idempotency_key)
+            except NodeError as exc:
                 root_cause = exc
+
                 if tries < self.config.max_retries:
                     delay = self._get_exponential_backoff(tries)
-                    logger.warning(f"retrying group creation on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    logger.warning(f"retrying group creation on {adapter.node}: attempt={tries + 1} backoff={delay}")
                     time.sleep(delay)
             else:
                 return
@@ -321,18 +359,18 @@ class Orchestrator:
 
         raise root_cause
 
-    def _delete_group_on_node(self, group: Group, adapter: NodeAdapter):
+    def _delete_group_on_node(self, group: Group, adapter: NodeAdapter, idempotency_key: str):
         tries: int = 0
-        root_cause: NodeConnectionError | None = None
+        root_cause: NodeError | None = None
 
         while tries <= self.config.max_retries:
             try:
-                adapter.delete_group(group)
-            except NodeConnectionError as exc:
+                adapter.delete_group(group, idempotency_key)
+            except NodeError as exc:
                 root_cause = exc
                 if tries < self.config.max_retries:
                     delay = self._get_exponential_backoff(tries)
-                    logger.warning(f"retrying group deletion on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    logger.warning(f"retrying group deletion on {adapter.node}: attempt={tries + 1} backoff={delay}")
                     time.sleep(delay)
             else:
                 return
@@ -349,10 +387,10 @@ class Orchestrator:
                 adapter.get_group(group)
             except NodeGroupNotFoundError:
                 return GroupState.NOT_FOUND
-            except NodeConnectionError:
+            except NodeError:
                 if tries < self.config.max_retries:
                     delay = self._get_exponential_backoff(tries)
-                    logger.warning(f"retrying group checking on {adapter.node}: attempt={tries + 2} backoff={delay}")
+                    logger.warning(f"retrying group checking on {adapter.node}: attempt={tries + 1} backoff={delay}")
                     time.sleep(delay)
             else:
                 return GroupState.FOUND
@@ -363,3 +401,10 @@ class Orchestrator:
 
     def _get_exponential_backoff(self, tries):
         return self.config.backoff * (2 ** tries)
+
+    @staticmethod
+    def _generate_idempotency_keys(adapters: List[NodeAdapter]) -> Dict[NodeAdapter, str]:
+        return {
+            itm: uuid.uuid4().hex
+            for itm in adapters
+        }

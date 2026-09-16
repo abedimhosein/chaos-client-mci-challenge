@@ -1,17 +1,17 @@
 from http import HTTPStatus
 
 
-class NodeConnectionError(Exception):
+class NodeError(Exception):
     """base exception class for all related exception to nodes"""
     pass
 
 
-class NodeRequestError(NodeConnectionError):
+class NodeRequestError(NodeError):
     """connection to specific node cannot be established for any reason that I don't care"""
     pass
 
 
-class NodeHTTPStatusError(NodeConnectionError):
+class NodeHTTPStatusError(NodeError):
     """Node returned an unsuccessful HTTP response."""
 
     def __init__(self, status_code: int, message: str = ""):
