@@ -15,6 +15,7 @@
   `POST /v1/group/`
 * Group deletion is performed using:
   `DELETE /v1/group/`
+* Node APIs support idempotent state-changing operations. Requests that alter the state machine, such as creating or deleting a group, include an idempotency key in the request header.
 * Group existence is checked using:
   `GET /v1/group/{group_id}/`
 * A successful `POST` returns HTTP `201 Created`.
